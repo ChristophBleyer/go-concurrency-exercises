@@ -8,6 +8,7 @@ package main
 
 import (
 	"strconv"
+	"sync"
 	"testing"
 )
 
@@ -28,7 +29,7 @@ func TestLRU(t *testing.T) {
 	loader := Loader{
 		DB: GetMockDB(),
 	}
-	cache := New(&loader)
+	cache := New(&loader, &sync.Mutex{})
 
 	for i := 0; i < 100; i++ {
 		cache.Get("Test" + strconv.Itoa(i))

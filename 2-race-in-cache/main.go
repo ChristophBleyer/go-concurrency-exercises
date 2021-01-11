@@ -8,7 +8,10 @@
 
 package main
 
-import "container/list"
+import (
+	"container/list"
+	"sync"
+)
 
 // CacheSize determines how big the cache can grow
 const CacheSize = 100
@@ -29,35 +32,55 @@ type KeyStoreCache struct {
 	cache map[string]*list.Element
 	pages list.List
 	load  func(string) string
+	mux   *sync.Mutex
 }
 
 // New creates a new KeyStoreCache
-func New(load KeyStoreCacheLoader) *KeyStoreCache {
+func New(load KeyStoreCacheLoader, mux *sync.Mutex) *KeyStoreCache {
 	return &KeyStoreCache{
 		load:  load.Load,
 		cache: make(map[string]*list.Element),
+		mux:   mux,
 	}
 }
 
 // Get gets the key from cache, loads it from the source if needed
 func (k *KeyStoreCache) Get(key string) string {
-	if e, ok := k.cache[key]; ok {
+
+	var ret string
+
+	k.mux.Lock()
+	e, ok := k.cache[key]
+
+	if ok {
 		k.pages.MoveToFront(e)
-		return e.Value.(page).Value
+		ret = e.Value.(page).Value
+		return ret
 	}
-	// Miss - load from database and save it in cache
-	p := page{key, k.load(key)}
-	// if cache is full remove the least used item
-	if len(k.cache) >= CacheSize {
-		end := k.pages.Back()
-		// remove from map
-		delete(k.cache, end.Value.(page).Key)
-		// remove from list
-		k.pages.Remove(end)
+
+	if !ok {
+		// Miss - load from database and save it in cache
+		p := page{key, k.load(key)}
+
+		// if cache is full remove the least used item
+		if len(k.cache) >= CacheSize {
+			end := k.pages.Back()
+			// remove from map
+			delete(k.cache, end.Value.(page).Key)
+			// remove from list
+			k.pages.Remove(end)
+		}
+
+		k.pages.PushFront(p)
+
+		k.cache[key] = k.pages.Front()
+
+		ret = p.Value
 	}
-	k.pages.PushFront(p)
-	k.cache[key] = k.pages.Front()
-	return p.Value
+
+	k.mux.Unlock()
+
+	return ret
 }
 
 // Loader implements KeyStoreLoader
@@ -79,7 +102,7 @@ func run() *KeyStoreCache {
 	loader := Loader{
 		DB: GetMockDB(),
 	}
-	cache := New(&loader)
+	cache := New(&loader, &sync.Mutex{})
 
 	RunMockServer(cache)
 
